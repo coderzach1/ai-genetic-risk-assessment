@@ -1,200 +1,130 @@
 from datetime import date
-from io import BytesIO
+import json
 
 import pandas as pd
 import streamlit as st
 
+from risk_engine import CONDITION_WEIGHTS, assess_risk, recommendations
 
-st.set_page_config(
-    page_title="RiskContext AI",
-    page_icon="R",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title="RiskContext AI", page_icon="🧬", layout="wide")
 
-
-def inject_styles() -> None:
-    st.markdown(
-        """
-        <style>
-        @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap');
-        :root { --ink:#17221f; --muted:#63726d; --paper:#f5f7f2; --mint:#dcefe6; --teal:#0b6b63; --coral:#ef795f; --line:#d8e2dc; }
-        html, body, [class*="css"] { font-family: 'Space Grotesk', sans-serif; color: var(--ink); }
-        .stApp { background: var(--paper); }
-        [data-testid="stSidebar"] { background: #eaf1eb; border-right: 1px solid var(--line); }
-        [data-testid="stSidebar"] > div:first-child { padding-top: 2rem; }
-        h1, h2, h3 { letter-spacing: -0.04em; }
-        h1 { font-size: 3.2rem !important; line-height: 1.02 !important; margin-bottom: .35rem !important; }
-        h2 { font-size: 1.55rem !important; }
-        .brand { font-size: 1.15rem; font-weight: 700; letter-spacing: -.03em; margin-bottom: 2.6rem; }
-        .brand-mark { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:9px; margin-right:9px; background:var(--teal); color:#fff; font-family:'DM Mono'; font-size:.8rem; }
-        .eyebrow { color:var(--teal); text-transform:uppercase; letter-spacing:.16em; font:500 .72rem 'DM Mono'; margin-bottom:.65rem; }
-        .lede { color:var(--muted); max-width:660px; font-size:1.05rem; line-height:1.55; margin-bottom:2rem; }
-        .status { display:inline-flex; align-items:center; gap:8px; border:1px solid #b9d7c7; background:#edf8f1; color:#27634d; border-radius:999px; padding:6px 10px; font:500 .72rem 'DM Mono'; }
-        .status-dot { width:7px; height:7px; background:#3ca36c; border-radius:50%; }
-        .section-label { color:var(--muted); text-transform:uppercase; letter-spacing:.12em; font:500 .68rem 'DM Mono'; margin:1.4rem 0 .7rem; }
-        .metric-card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:1.15rem 1.3rem; min-height:125px; }
-        .metric-kicker { color:var(--muted); font:500 .68rem 'DM Mono'; text-transform:uppercase; letter-spacing:.1em; }
-        .metric-value { font-size:2.35rem; font-weight:600; letter-spacing:-.06em; margin:.35rem 0 .2rem; }
-        .metric-note { color:var(--muted); font-size:.78rem; }
-        .callout { background:var(--ink); color:#f8fcf7; border-radius:14px; padding:1.35rem 1.5rem; margin:1.3rem 0; }
-        .callout strong { color:#9fe0c1; }
-        .callout p { color:#d5e2db; line-height:1.55; margin:.4rem 0 0; }
-        .report-head { border-bottom:1px solid var(--line); padding-bottom:1rem; margin-bottom:1.2rem; }
-        .small-mono { font: .72rem 'DM Mono'; color:var(--muted); }
-        div[data-testid="stMetric"] { background:#fff; border:1px solid var(--line); padding:1rem; border-radius:12px; }
-        div[data-testid="stMetric"] label { font-family:'DM Mono'; text-transform:uppercase; font-size:.65rem; letter-spacing:.1em; }
-        .stButton > button, .stDownloadButton > button { border-radius:8px; font-weight:600; border:1px solid var(--teal); }
-        .stButton > button[kind="primary"] { background:var(--teal); }
-        .stTabs [data-baseweb="tab-list"] { gap:1.5rem; }
-        .stTabs [data-baseweb="tab"] { font-family:'DM Mono'; font-size:.72rem; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def adjusted_risk(raw_score: float, ancestry: dict[str, int], environment: dict[str, int]) -> tuple[float, float, float]:
-    """A transparent demo calibration, intentionally bounded for decision support."""
-    european_share = ancestry["European"] / 100
-    diversity_gap = 1 - european_share
-    ancestry_adjustment = diversity_gap * 0.22
-    environmental_load = sum(environment.values()) / (len(environment) * 4)
-    context_adjustment = ancestry_adjustment + (environmental_load - 0.5) * 0.12
-    corrected = max(1, min(99, raw_score * (1 - context_adjustment)))
-    confidence = max(55, min(96, 92 - diversity_gap * 24 - environmental_load * 7))
-    return corrected, context_adjustment * 100, confidence
-
-
-def build_report(patient_id: str, condition: str, raw: float, corrected: float, ancestry: dict[str, int], environment: dict[str, int], confidence: float) -> bytes:
-    ancestry_lines = "\n".join(f"- {key}: {value}%" for key, value in ancestry.items())
-    environment_lines = "\n".join(f"- {key}: {value}/4" for key, value in environment.items())
-    report = f"""# RiskContext AI | Contextualized Risk Brief
-Generated: {date.today().isoformat()}
-Patient reference: {patient_id}
-Condition: {condition}
-
-## Risk summary
-- Uncorrected PRS percentile: {raw:.0f}
-- Context-adjusted percentile: {corrected:.0f}
-- Model confidence: {confidence:.0f}%
-
-## Ancestry context
-{ancestry_lines}
-
-## Environment context (0 = low, 4 = high)
-{environment_lines}
-
-## Interpretation
-This report is a research prototype for clinician review. The adjusted score is a transparent contextual estimate, not a diagnosis or a replacement for validated clinical guidelines. Consider family history, clinical measurements, variant quality, and patient preferences before acting.
-
-## Suggested next step
-Use the adjusted score as one input to a shared decision conversation. Avoid ancestry-based assumptions and document the evidence considered.
-"""
-    return report.encode("utf-8")
-
-
-inject_styles()
+st.markdown("""
+<style>
+:root {--ink:#11231f;--muted:#61716c;--paper:#f5f7f3;--teal:#086b60;--line:#d8e4dd;}
+.stApp{background:var(--paper)}
+[data-testid="stSidebar"]{background:#eaf2ed;border-right:1px solid var(--line)}
+h1,h2,h3{letter-spacing:-.035em}.hero{font-size:3.2rem;font-weight:750;line-height:1.04;color:var(--ink)}
+.lede{color:var(--muted);font-size:1.05rem;max-width:760px;margin:.7rem 0 1.4rem}
+.pill{display:inline-block;padding:.35rem .7rem;border:1px solid #a9d1c4;border-radius:999px;background:#edf8f3;color:#195d4c;font-size:.78rem}
+.notice{background:#fff6dc;border-left:4px solid #d89a17;padding:1rem 1.15rem;border-radius:8px;margin:1rem 0}
+div[data-testid="stMetric"]{background:white;border:1px solid var(--line);padding:1rem;border-radius:12px}
+.stButton>button,.stDownloadButton>button{border-radius:9px;font-weight:650}
+</style>
+""", unsafe_allow_html=True)
 
 with st.sidebar:
-    st.markdown('<div class="brand"><span class="brand-mark">R</span>RiskContext AI</div>', unsafe_allow_html=True)
-    st.markdown('<div class="section-label">Workspace</div>', unsafe_allow_html=True)
-    mode = st.radio("View", ["Risk interrogator", "Method notes"], label_visibility="collapsed")
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown('<div class="section-label">Pipeline</div>', unsafe_allow_html=True)
-    st.markdown("**01**  Patient context\n\n**02**  Risk calibration\n\n**03**  Clinical brief")
+    st.title("🧬 RiskContext AI")
+    page = st.radio("Workspace", ["Risk assessment", "Method & safety"])
     st.divider()
-    st.markdown('<span class="small-mono">DEMO MODE  /  v0.4</span>', unsafe_allow_html=True)
+    st.caption("Research prototype · v1.0")
+    st.caption("Do not enter names, IDs, or other identifying health information.")
 
-if mode == "Method notes":
-    st.markdown('<div class="eyebrow">Model transparency</div>', unsafe_allow_html=True)
-    st.title("A score should explain itself.")
-    st.markdown("The prototype uses a bounded, inspectable adjustment so clinicians can see what changes the output. It is deliberately not presented as a validated medical model.")
-    st.markdown("### Calibration logic")
-    st.code("context_adjustment = ancestry_gap * 0.22 + (environmental_load - 0.5) * 0.12\nadjusted_percentile = raw_percentile * (1 - context_adjustment)", language="python")
-    st.markdown("### What to validate before clinical use")
-    st.write("External calibration by condition and population, variant quality controls, confidence intervals, prospective clinical utility, subgroup performance, and governance for patient consent and data retention.")
+if page == "Method & safety":
+    st.title("Transparent by design")
+    st.write("This app is a deterministic decision-support demonstration—not a trained diagnostic model. It combines an existing PRS percentile with condition-specific context weights and widens uncertainty when evidence quality is weak.")
+    st.subheader("What the output means")
+    st.markdown("- **Adjusted percentile:** a bounded contextual estimate, not disease probability.\n- **Uncertainty interval:** a sensitivity range driven by cohort match and variant quality.\n- **Data quality:** evidence completeness, not model accuracy.\n- **Contributions:** the visible effect of every factor group.")
+    st.subheader("Required before clinical use")
+    st.write("External cohort validation, calibration curves, AUROC/sensitivity/specificity, subgroup fairness analysis, prospective evaluation, privacy controls, audit logging, clinical governance, and applicable regulatory approval.")
+    st.info("100% accuracy is neither demonstrated nor promised. Real medical performance must be measured on representative, unseen data.")
     st.stop()
 
-st.markdown('<div class="status"><span class="status-dot"></span>Decision support prototype · clinician review required</div>', unsafe_allow_html=True)
-st.markdown('<div class="eyebrow" style="margin-top:1.5rem">Precision medicine / context layer</div>', unsafe_allow_html=True)
-st.title("Make genetic risk\ncontextual, not absolute.")
-st.markdown("<div class=\"lede\">Interrogate a polygenic risk score against ancestry composition and lived environment. Surface where a raw percentile may overstate certainty, so the clinical conversation starts with context.</div>", unsafe_allow_html=True)
+st.markdown('<span class="pill">Decision support · clinician review required</span>', unsafe_allow_html=True)
+st.markdown('<div class="hero">Genetic risk, with the context<br>the raw score leaves out.</div>', unsafe_allow_html=True)
+st.markdown('<div class="lede">Explore how evidence quality, family history, clinical factors, and environment affect interpretation of a polygenic-risk percentile. Every adjustment is visible and exportable.</div>', unsafe_allow_html=True)
+st.markdown('<div class="notice"><b>Research use only.</b> This is not a diagnosis, medical device, or substitute for validated clinical guidelines.</div>', unsafe_allow_html=True)
 
-with st.form("risk_form"):
-    left, right = st.columns([1, 1], gap="large")
-    with left:
-        st.markdown("### Patient context")
-        patient_id = st.text_input("Patient reference", value="RC-2048", help="Use a non-identifying reference for this prototype.")
-        condition = st.selectbox("Risk domain", ["Coronary artery disease", "Type 2 diabetes", "Breast cancer", "Alzheimer's disease"])
-        raw_score = st.slider("Raw PRS percentile", 1, 99, 78, help="Percentile from the source PRS pipeline.")
-    with right:
-        st.markdown("### Global ancestry estimate")
-        st.caption("Sum to 100%. Use a global estimate, not a proxy for identity.")
-        ancestry_cols = st.columns(4)
-        ancestry = {}
-        for column, label, value in zip(ancestry_cols, ["European", "African", "East Asian", "South Asian"], [42, 24, 18, 16]):
-            with column:
-                ancestry[label] = st.number_input(label, 0, 100, value, 1, key=f"ancestry_{label}")
-    st.markdown("### Environment and access")
-    env_cols = st.columns(4)
-    env_labels = ["Food access", "Activity", "Air quality", "Care access"]
-    env_help = ["Low access to fresh, affordable food", "Low opportunity for regular movement", "Exposure to particulate pollution", "Barriers to screening or continuity"]
+with st.form("assessment"):
+    st.subheader("1 · Genetic evidence")
+    a, b, c = st.columns(3)
+    with a:
+        patient_ref = st.text_input("Anonymous case reference", "DEMO-001")
+        condition = st.selectbox("Condition", list(CONDITION_WEIGHTS))
+    with b:
+        raw = st.slider("Source PRS percentile", 1, 99, 72)
+        cohort_match = st.slider("Reference-cohort match", 0, 4, 2, help="0 = unknown/poor, 4 = strong documented match")
+    with c:
+        variant_quality = st.slider("Variant quality", 0, 4, 3, help="0 = unknown/poor, 4 = verified high quality")
+        family = st.select_slider("Family history", options=[0, 1, 2], value=1, format_func=lambda x: ["None known", "One close relative", "Multiple/early onset"][x])
+
+    st.subheader("2 · Ancestry context")
+    st.caption("Technical global ancestry estimate only; it is not identity, race, or a basis for care decisions. Values must total 100%.")
+    cols = st.columns(4)
+    ancestry = {}
+    for col, label, default in zip(cols, ["European", "African", "East Asian", "South Asian"], [25, 25, 25, 25]):
+        with col:
+            ancestry[label] = st.number_input(label, 0, 100, default, 1)
+    st.caption(f"Current total: {sum(ancestry.values())}%")
+
+    st.subheader("3 · Clinical and access context")
+    clinical = {}
     environment = {}
-    for column, label, help_text in zip(env_cols, env_labels, env_help):
-        with column:
-            environment[label] = st.slider(label, 0, 4, 2, key=f"env_{label}", help=help_text)
-    submitted = st.form_submit_button("Interrogate risk", type="primary", use_container_width=True)
-
-if "result" not in st.session_state:
-    st.session_state.result = True
+    left, right = st.columns(2)
+    with left:
+        st.markdown("**Clinical burden** · 0 low, 4 high")
+        for label in ["Blood pressure", "Metabolic markers", "Smoking exposure"]:
+            clinical[label] = st.slider(label, 0, 4, 2 if label != "Smoking exposure" else 0)
+    with right:
+        st.markdown("**Environment / access barriers** · 0 low, 4 high")
+        for label in ["Food access", "Activity barriers", "Air quality", "Care barriers"]:
+            environment[label] = st.slider(label, 0, 4, 2)
+    consent = st.checkbox("I understand this is a non-diagnostic research prototype.")
+    submitted = st.form_submit_button("Run transparent assessment", type="primary", use_container_width=True)
 
 if submitted:
-    if sum(ancestry.values()) != 100:
-        st.error(f"Ancestry estimates currently sum to {sum(ancestry.values())}%. Adjust them to exactly 100%.")
+    if not consent:
+        st.error("Please confirm that you understand the research-only limitation.")
         st.stop()
-    st.session_state.analysis = (patient_id, condition, raw_score, ancestry, environment)
+    try:
+        st.session_state.case = {"patient_ref": patient_ref.strip() or "DEMO", "condition": condition, "raw": raw, "ancestry": ancestry, "environment": environment, "clinical": clinical, "family": family, "cohort_match": cohort_match, "variant_quality": variant_quality}
+    except Exception as exc:
+        st.error(str(exc))
 
-patient_id, condition, raw_score, ancestry, environment = st.session_state.get("analysis", ("RC-2048", "Coronary artery disease", 78, {"European": 42, "African": 24, "East Asian": 18, "South Asian": 16}, {"Food access": 2, "Activity": 2, "Air quality": 2, "Care access": 2}))
-corrected, delta, confidence = adjusted_risk(raw_score, ancestry, environment)
+if "case" not in st.session_state:
+    st.info("Complete the form and run the assessment to see results.")
+    st.stop()
 
-st.markdown('<div class="section-label">Analysis output</div>', unsafe_allow_html=True)
-metric_a, metric_b, metric_c, metric_d = st.columns(4)
-with metric_a:
-    st.metric("Raw percentile", f"{raw_score:.0f}", "source PRS")
-with metric_b:
-    st.metric("Context-adjusted", f"{corrected:.0f}", f"{corrected - raw_score:+.0f} points")
-with metric_c:
-    st.metric("Context shift", f"{delta:+.1f}%", "bounded adjustment")
-with metric_d:
-    st.metric("Confidence", f"{confidence:.0f}%", "context completeness")
+case = st.session_state.case
+try:
+    result = assess_risk(case["condition"], case["raw"], case["ancestry"], case["environment"], case["clinical"], case["family"], case["cohort_match"], case["variant_quality"])
+except ValueError as exc:
+    st.error(str(exc)); st.stop()
 
-st.markdown('<div class="callout"><strong>Clinical readout</strong><p>The raw score places this profile in the high-risk band. After accounting for ancestry representation and environmental context, the estimate moves to a more cautious level. Treat the shift as a prompt to investigate, not as permission to dismiss risk.</p></div>', unsafe_allow_html=True)
+st.divider(); st.subheader("Assessment result")
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Source PRS", f"{case['raw']:.0f}th", "percentile")
+m2.metric("Context estimate", f"{result.adjusted_percentile:.1f}th", f"{result.adjusted_percentile-case['raw']:+.1f} points")
+m3.metric("Uncertainty range", f"{result.lower_bound:.0f}–{result.upper_bound:.0f}", "sensitivity interval")
+m4.metric("Evidence quality", f"{result.data_quality:.0f}/100", "not accuracy")
 
-tab_risk, tab_context, tab_actions = st.tabs(["Risk comparison", "Context signals", "Clinical brief"])
-with tab_risk:
-    chart_data = pd.DataFrame({"Score": [raw_score, corrected]}, index=["Uncorrected PRS", "Context-adjusted"])
-    st.bar_chart(chart_data, color="#0b6b63", height=270)
-    st.caption("Percentile scale: 0 = lower observed risk relative to reference cohort, 100 = higher observed risk. This visualization is not a diagnostic threshold.")
-with tab_context:
-    context_col, table_col = st.columns([1, 1.15], gap="large")
-    with context_col:
-        ancestry_data = pd.DataFrame({"Share": list(ancestry.values())}, index=list(ancestry.keys()))
-        st.bar_chart(ancestry_data, color="#ef795f", height=260)
-    with table_col:
-        st.markdown("**Signals contributing to interpretation**")
-        signals = pd.DataFrame({"Signal": list(environment.keys()), "Intensity": [f"{value}/4" for value in environment.values()], "Read": ["Higher context load" if value >= 3 else "Moderate context load" if value == 2 else "Lower context load" for value in environment.values()]})
-        st.dataframe(signals, hide_index=True, use_container_width=True)
-with tab_actions:
-    st.markdown("### Suggested conversation")
-    st.write(f"For {condition.lower()}, confirm the underlying PRS cohort and variant quality, review family history and clinical measurements, and discuss whether additional screening is appropriate. The ancestry adjustment should trigger calibration review, not a change in care by itself.")
-    st.markdown("### Guardrails")
-    st.write("Do not use the output as a diagnosis, as a basis for denying care, or as a substitute for a validated guideline. Document uncertainty and invite the patient to correct the context data.")
+st.markdown(f"### Interpretation: {result.category} contextual band")
+st.write("The interval matters more than the point estimate. A band crossing a category boundary means the classification is unstable and should not drive a decision.")
+for warning in result.warnings:
+    st.warning(warning)
 
-st.divider()
-report = build_report(patient_id, condition, raw_score, corrected, ancestry, environment, confidence)
-download_col, note_col = st.columns([1, 2])
-with download_col:
-    st.download_button("Download clinical brief", data=report, file_name=f"riskcontext_{patient_id}.md", mime="text/markdown", use_container_width=True)
-with note_col:
-    st.markdown('<span class="small-mono">REPORT READY  /  includes inputs, calibration output, and review guardrails</span>', unsafe_allow_html=True)
+tab1, tab2, tab3 = st.tabs(["Why this result", "Next steps", "Audit & export"])
+with tab1:
+    chart = pd.DataFrame({"Contribution (points)": result.contributions}).sort_values("Contribution (points)")
+    st.bar_chart(chart, color="#086b60", horizontal=True)
+    st.caption("Positive values raise and negative values lower the contextual estimate. Evidence-quality inputs primarily affect uncertainty.")
+with tab2:
+    for index, step in enumerate(recommendations(case["condition"], result), 1):
+        st.write(f"**{index}.** {step}")
+    st.error("Never use this output to diagnose disease, change medication, deny care, or avoid screening.")
+with tab3:
+    audit = {"generated": date.today().isoformat(), "model_version": "transparent-demo-1.0", "inputs": case, "result": result.to_dict(), "limitations": "Research prototype; not clinically validated."}
+    st.json(audit)
+    report = f"""# RiskContext AI brief\n\nGenerated: {audit['generated']}  \nCase: {case['patient_ref']}  \nCondition: {case['condition']}\n\n- Source PRS percentile: {case['raw']}\n- Context estimate: {result.adjusted_percentile}\n- Uncertainty range: {result.lower_bound}–{result.upper_bound}\n- Evidence quality: {result.data_quality}/100 (not accuracy)\n- Interpretation band: {result.category}\n\n## Warnings\n""" + "\n".join(f"- {w}" for w in result.warnings or ["No automatic warnings."]) + "\n\n## Limitation\nResearch-only demonstration. Not a diagnosis or clinical recommendation."
+    d1, d2 = st.columns(2)
+    d1.download_button("Download clinical brief", report.encode(), f"riskcontext_{case['patient_ref']}.md", "text/markdown", use_container_width=True)
+    d2.download_button("Download audit JSON", json.dumps(audit, indent=2), f"riskcontext_{case['patient_ref']}.json", "application/json", use_container_width=True)
