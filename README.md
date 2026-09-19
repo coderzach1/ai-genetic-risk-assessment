@@ -1,30 +1,41 @@
-# RiskContext AI
+# RiskContext T2D
 
-A transparent Streamlit research prototype that combines an imported polygenic-risk percentile with family history, clinical context, environment/access, cohort match, and variant quality.
+An evidence-linked Streamlit research app for interpreting the South Asian–optimized **PGS005336 (D_MetPRS_SAS)** Type 2 diabetes polygenic score.
 
-## Features
+## What changed
 
-- Condition-specific, bounded risk-context calculation
-- Explicit uncertainty interval instead of a misleading “accuracy” claim
-- Data-quality score and validation warnings
-- Explainable factor contributions
-- Dynamic next-step recommendations
-- Downloadable JSON audit record and Markdown clinical brief
-- Deterministic unit tests
+- Replaced the hand-written contextual risk formula with a published PGS Catalog model reference
+- Reports percentile and relative genetic odds from a standardized PGS z-score
+- Shows published South Asian evaluation cohorts and AUROC values
+- Validates genotype upload format/build readiness without retaining or pretending to score incomplete files
+- Keeps clinical measurements separate from the genetic association
+- Flags low variant coverage, ancestry mismatch, genome-build mismatch, and unverified score sources
+- Produces an auditable JSON record
 
-> **Research use only:** this repository does not contain a clinically validated model and must not be used to diagnose, treat, deny care, or replace professional judgment. No medical AI can honestly guarantee 100% accuracy.
+## Model evidence
 
-## Run locally
+- PGS Catalog: [PGS005336](https://www.pgscatalog.org/score/PGS005336/)
+- Trait: Type 2 diabetes
+- Method: LDpred2
+- Genome build: GRCh37
+- Variants: 1,297,046
+- Reported South Asian AUROC: 0.720–0.839 across listed cohorts
+
+Published performance is cohort-specific and does not establish accuracy for Pakistani clinical deployment.
+
+## Run
 
 ```bash
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-pytest -q
+python -m pytest -q
 streamlit run app.py
 ```
 
-## Validation path
+## Genotype scoring
 
-Before real clinical use, replace the demonstration engine with a locked, versioned model; validate discrimination and calibration on external cohorts; publish subgroup metrics and confidence intervals; test prospectively; add consent, privacy, retention, access-control, and clinical-governance workflows; and obtain the required regulatory review.
+Full PGS005336 scoring requires harmonized genomic data and roughly 1.3 million variants. Run the official `pgsc_calc` workflow in a consented, secure research environment; then provide the standardized score and quality metrics to this app. The Streamlit interface does not retain or calculate uploaded genomic files.
+
+> **Research use only:** not a diagnostic device and not a substitute for glucose/HbA1c testing, professional judgment, local validation, or regulatory approval.
