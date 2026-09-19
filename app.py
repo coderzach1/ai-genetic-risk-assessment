@@ -1,130 +1,67 @@
 from datetime import date
 import json
-
 import pandas as pd
 import streamlit as st
+from pgs_engine import MODEL, build_audit_record, interpret_score, validate_genotype_upload
 
-from risk_engine import CONDITION_WEIGHTS, assess_risk, recommendations
-
-st.set_page_config(page_title="RiskContext AI", page_icon="🧬", layout="wide")
-
-st.markdown("""
-<style>
-:root {--ink:#11231f;--muted:#61716c;--paper:#f5f7f3;--teal:#086b60;--line:#d8e4dd;}
-.stApp{background:var(--paper)}
-[data-testid="stSidebar"]{background:#eaf2ed;border-right:1px solid var(--line)}
-h1,h2,h3{letter-spacing:-.035em}.hero{font-size:3.2rem;font-weight:750;line-height:1.04;color:var(--ink)}
-.lede{color:var(--muted);font-size:1.05rem;max-width:760px;margin:.7rem 0 1.4rem}
-.pill{display:inline-block;padding:.35rem .7rem;border:1px solid #a9d1c4;border-radius:999px;background:#edf8f3;color:#195d4c;font-size:.78rem}
-.notice{background:#fff6dc;border-left:4px solid #d89a17;padding:1rem 1.15rem;border-radius:8px;margin:1rem 0}
-div[data-testid="stMetric"]{background:white;border:1px solid var(--line);padding:1rem;border-radius:12px}
-.stButton>button,.stDownloadButton>button{border-radius:9px;font-weight:650}
-</style>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="RiskContext T2D",page_icon="🧬",layout="wide")
+st.markdown("""<style>:root{--ink:#10231f;--muted:#60716b;--paper:#f5f8f5;--teal:#087064;--line:#d5e3dc}.stApp{background:var(--paper)}[data-testid="stSidebar"]{background:#e8f1ec;border-right:1px solid var(--line)}h1,h2,h3{letter-spacing:-.035em}.hero{font-size:3.1rem;font-weight:760;line-height:1.04;color:var(--ink)}.lede{color:var(--muted);font-size:1.05rem;max-width:780px;margin:.7rem 0 1.4rem}.pill{display:inline-block;padding:.35rem .7rem;border:1px solid #a8d4c5;border-radius:999px;background:#ecf9f4;color:#185d4d;font-size:.78rem}.notice{background:#fff6dc;border-left:4px solid #d89a17;padding:1rem 1.15rem;border-radius:8px;margin:1rem 0}div[data-testid="stMetric"]{background:#fff;border:1px solid var(--line);padding:1rem;border-radius:12px}</style>""",unsafe_allow_html=True)
 
 with st.sidebar:
-    st.title("🧬 RiskContext AI")
-    page = st.radio("Workspace", ["Risk assessment", "Method & safety"])
-    st.divider()
-    st.caption("Research prototype · v1.0")
-    st.caption("Do not enter names, IDs, or other identifying health information.")
+    st.title("🧬 RiskContext T2D"); page=st.radio("Workspace",["Assessment","Genotype pipeline","Evidence & safety"]); st.divider(); st.caption(f"Model: {MODEL['id']} · {MODEL['name']}"); st.caption("South Asian–optimized research workflow")
 
-if page == "Method & safety":
-    st.title("Transparent by design")
-    st.write("This app is a deterministic decision-support demonstration—not a trained diagnostic model. It combines an existing PRS percentile with condition-specific context weights and widens uncertainty when evidence quality is weak.")
-    st.subheader("What the output means")
-    st.markdown("- **Adjusted percentile:** a bounded contextual estimate, not disease probability.\n- **Uncertainty interval:** a sensitivity range driven by cohort match and variant quality.\n- **Data quality:** evidence completeness, not model accuracy.\n- **Contributions:** the visible effect of every factor group.")
-    st.subheader("Required before clinical use")
-    st.write("External cohort validation, calibration curves, AUROC/sensitivity/specificity, subgroup fairness analysis, prospective evaluation, privacy controls, audit logging, clinical governance, and applicable regulatory approval.")
-    st.info("100% accuracy is neither demonstrated nor promised. Real medical performance must be measured on representative, unseen data.")
-    st.stop()
+if page=="Evidence & safety":
+    st.title("Published model, visible limitations")
+    st.markdown(f"""This version references **[{MODEL['id']}]({MODEL['catalog_url']})**, a published Type 2 diabetes polygenic score optimized and evaluated for South Asian ancestry.
 
-st.markdown('<span class="pill">Decision support · clinician review required</span>', unsafe_allow_html=True)
-st.markdown('<div class="hero">Genetic risk, with the context<br>the raw score leaves out.</div>', unsafe_allow_html=True)
-st.markdown('<div class="lede">Explore how evidence quality, family history, clinical factors, and environment affect interpretation of a polygenic-risk percentile. Every adjustment is visible and exportable.</div>', unsafe_allow_html=True)
-st.markdown('<div class="notice"><b>Research use only.</b> This is not a diagnosis, medical device, or substitute for validated clinical guidelines.</div>', unsafe_allow_html=True)
+- Method: {MODEL['method']}
+- Genome build: {MODEL['genome_build']}
+- Variants: {MODEL['variant_count']:,}
+- Reported South Asian AUROC: {MODEL['auroc_low']:.3f}–{MODEL['auroc_high']:.3f}
+- Reported odds ratio per SD: {MODEL['or_per_sd']:.2f}
+
+The app reports relative genetic odds, not absolute disease probability. Published performance does not prove accuracy in Pakistani patients.""")
+    st.warning("Research use only. Do not use this output to diagnose diabetes or change medication."); st.stop()
+
+if page=="Genotype pipeline":
+    st.title("Genotype input readiness")
+    st.write("The official score contains about 1.3 million variants. Upload validation checks readiness; reproducible scoring should run through the official PGS Catalog pipeline in a controlled environment.")
+    uploaded=st.file_uploader("Upload genotype file for format validation",type=["vcf","gz","pgen","bed"]); build=st.selectbox("Declared genome build",["GRCh37","GRCh38","Unknown"])
+    if uploaded:
+        report=validate_genotype_upload(uploaded.name,uploaded.size,build); (st.success if report.ready else st.error)(report.message); st.json(report.to_dict())
+    st.code("pgscatalog-download --pgs PGS005336\nnextflow run pgscatalog/pgsc_calc -profile docker --input samplesheet.csv --pgs_id PGS005336 --target_build GRCh37",language="bash")
+    st.caption("Uploaded files are not scored or saved by this prototype."); st.stop()
+
+st.markdown('<span class="pill">PGS Catalog evidence · clinician review required</span>',unsafe_allow_html=True)
+st.markdown('<div class="hero">Type 2 diabetes genetic risk,<br>grounded in published evidence.</div>',unsafe_allow_html=True)
+st.markdown('<div class="lede">Interpret a standardized PGS005336 result using performance reported in South Asian evaluation cohorts. Clinical measurements remain separate so the app does not invent an unvalidated combined probability.</div>',unsafe_allow_html=True)
+st.markdown('<div class="notice"><b>Research use only.</b> Diabetes diagnosis requires validated laboratory testing and clinical evaluation.</div>',unsafe_allow_html=True)
 
 with st.form("assessment"):
-    st.subheader("1 · Genetic evidence")
-    a, b, c = st.columns(3)
-    with a:
-        patient_ref = st.text_input("Anonymous case reference", "DEMO-001")
-        condition = st.selectbox("Condition", list(CONDITION_WEIGHTS))
-    with b:
-        raw = st.slider("Source PRS percentile", 1, 99, 72)
-        cohort_match = st.slider("Reference-cohort match", 0, 4, 2, help="0 = unknown/poor, 4 = strong documented match")
-    with c:
-        variant_quality = st.slider("Variant quality", 0, 4, 3, help="0 = unknown/poor, 4 = verified high quality")
-        family = st.select_slider("Family history", options=[0, 1, 2], value=1, format_func=lambda x: ["None known", "One close relative", "Multiple/early onset"][x])
-
-    st.subheader("2 · Ancestry context")
-    st.caption("Technical global ancestry estimate only; it is not identity, race, or a basis for care decisions. Values must total 100%.")
-    cols = st.columns(4)
-    ancestry = {}
-    for col, label, default in zip(cols, ["European", "African", "East Asian", "South Asian"], [25, 25, 25, 25]):
-        with col:
-            ancestry[label] = st.number_input(label, 0, 100, default, 1)
-    st.caption(f"Current total: {sum(ancestry.values())}%")
-
-    st.subheader("3 · Clinical and access context")
-    clinical = {}
-    environment = {}
-    left, right = st.columns(2)
-    with left:
-        st.markdown("**Clinical burden** · 0 low, 4 high")
-        for label in ["Blood pressure", "Metabolic markers", "Smoking exposure"]:
-            clinical[label] = st.slider(label, 0, 4, 2 if label != "Smoking exposure" else 0)
-    with right:
-        st.markdown("**Environment / access barriers** · 0 low, 4 high")
-        for label in ["Food access", "Activity barriers", "Air quality", "Care barriers"]:
-            environment[label] = st.slider(label, 0, 4, 2)
-    consent = st.checkbox("I understand this is a non-diagnostic research prototype.")
-    submitted = st.form_submit_button("Run transparent assessment", type="primary", use_container_width=True)
+    st.subheader("1 · PGS005336 result"); c1,c2,c3=st.columns(3)
+    with c1: case_ref=st.text_input("Anonymous case reference","DEMO-001"); z=st.number_input("Standardized PGS (z-score)",-5.0,5.0,0.0,.1)
+    with c2: source=st.selectbox("Score source",["PGS Catalog pipeline","Clinical genetics laboratory","Research pipeline","Unknown"]); build=st.selectbox("Genome build",["GRCh37","GRCh38","Unknown"])
+    with c3: coverage=st.slider("Variant coverage",0,100,90); ancestry=st.selectbox("Reference match",["South Asian","Mixed/other","Unknown"])
+    st.subheader("2 · Clinical context (shown separately)"); left,right=st.columns(2)
+    with left: age=st.number_input("Age",18,100,40); bmi=st.number_input("BMI",10.0,60.0,25.0,.1); family=st.checkbox("Parent or sibling with Type 2 diabetes")
+    with right: hba1c=st.number_input("HbA1c % (0 if unavailable)",0.0,20.0,0.0,.1); glucose=st.number_input("Fasting glucose mg/dL (0 if unavailable)",0.0,600.0,0.0,1.0); symptoms=st.checkbox("Possible hyperglycaemia symptoms")
+    consent=st.checkbox("I understand this is research interpretation, not diagnosis."); submitted=st.form_submit_button("Interpret published score",type="primary",use_container_width=True)
 
 if submitted:
-    if not consent:
-        st.error("Please confirm that you understand the research-only limitation.")
-        st.stop()
-    try:
-        st.session_state.case = {"patient_ref": patient_ref.strip() or "DEMO", "condition": condition, "raw": raw, "ancestry": ancestry, "environment": environment, "clinical": clinical, "family": family, "cohort_match": cohort_match, "variant_quality": variant_quality}
-    except Exception as exc:
-        st.error(str(exc))
+    if not consent: st.error("Confirm the research-only limitation."); st.stop()
+    result=interpret_score(z,coverage,ancestry,build,source); clinical={"age":age,"bmi":bmi,"family_history":family,"hba1c":hba1c,"fasting_glucose":glucose,"symptoms":symptoms}; st.session_state.analysis={"case_ref":case_ref.strip() or "DEMO","z_score":z,"coverage":coverage,"ancestry":ancestry,"build":build,"source":source,"clinical":clinical,"result":result}
+if "analysis" not in st.session_state: st.info("Enter a quality-controlled PGS005336 z-score to see its interpretation."); st.stop()
 
-if "case" not in st.session_state:
-    st.info("Complete the form and run the assessment to see results.")
-    st.stop()
-
-case = st.session_state.case
-try:
-    result = assess_risk(case["condition"], case["raw"], case["ancestry"], case["environment"], case["clinical"], case["family"], case["cohort_match"], case["variant_quality"])
-except ValueError as exc:
-    st.error(str(exc)); st.stop()
-
-st.divider(); st.subheader("Assessment result")
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Source PRS", f"{case['raw']:.0f}th", "percentile")
-m2.metric("Context estimate", f"{result.adjusted_percentile:.1f}th", f"{result.adjusted_percentile-case['raw']:+.1f} points")
-m3.metric("Uncertainty range", f"{result.lower_bound:.0f}–{result.upper_bound:.0f}", "sensitivity interval")
-m4.metric("Evidence quality", f"{result.data_quality:.0f}/100", "not accuracy")
-
-st.markdown(f"### Interpretation: {result.category} contextual band")
-st.write("The interval matters more than the point estimate. A band crossing a category boundary means the classification is unstable and should not drive a decision.")
-for warning in result.warnings:
-    st.warning(warning)
-
-tab1, tab2, tab3 = st.tabs(["Why this result", "Next steps", "Audit & export"])
-with tab1:
-    chart = pd.DataFrame({"Contribution (points)": result.contributions}).sort_values("Contribution (points)")
-    st.bar_chart(chart, color="#086b60", horizontal=True)
-    st.caption("Positive values raise and negative values lower the contextual estimate. Evidence-quality inputs primarily affect uncertainty.")
-with tab2:
-    for index, step in enumerate(recommendations(case["condition"], result), 1):
-        st.write(f"**{index}.** {step}")
-    st.error("Never use this output to diagnose disease, change medication, deny care, or avoid screening.")
-with tab3:
-    audit = {"generated": date.today().isoformat(), "model_version": "transparent-demo-1.0", "inputs": case, "result": result.to_dict(), "limitations": "Research prototype; not clinically validated."}
-    st.json(audit)
-    report = f"""# RiskContext AI brief\n\nGenerated: {audit['generated']}  \nCase: {case['patient_ref']}  \nCondition: {case['condition']}\n\n- Source PRS percentile: {case['raw']}\n- Context estimate: {result.adjusted_percentile}\n- Uncertainty range: {result.lower_bound}–{result.upper_bound}\n- Evidence quality: {result.data_quality}/100 (not accuracy)\n- Interpretation band: {result.category}\n\n## Warnings\n""" + "\n".join(f"- {w}" for w in result.warnings or ["No automatic warnings."]) + "\n\n## Limitation\nResearch-only demonstration. Not a diagnosis or clinical recommendation."
-    d1, d2 = st.columns(2)
-    d1.download_button("Download clinical brief", report.encode(), f"riskcontext_{case['patient_ref']}.md", "text/markdown", use_container_width=True)
-    d2.download_button("Download audit JSON", json.dumps(audit, indent=2), f"riskcontext_{case['patient_ref']}.json", "application/json", use_container_width=True)
+a=st.session_state.analysis; r=a["result"]; clinical=a["clinical"]; st.divider(); st.subheader("Genetic interpretation")
+m1,m2,m3,m4=st.columns(4); m1.metric("PGS percentile",f"{r.percentile:.1f}th"); m2.metric("Relative genetic odds",f"{r.relative_odds:.2f}×","vs population mean"); m3.metric("Evidence quality",f"{r.quality_score}/100","not accuracy"); m4.metric("Genetic band",r.band)
+for warning in r.warnings: st.warning(warning)
+t1,t2,t3=st.tabs(["Evidence","Clinical checks","Audit & export"])
+with t1:
+    st.dataframe(pd.DataFrame({"South Asian cohort":["UK Biobank","All of Us","MGBB"],"N":[6605,3217,607],"Reported AUROC":[.720,.839,.834]}),hide_index=True,use_container_width=True); st.write("Odds are not the same as probability; performance varies by cohort.")
+with t2:
+    if clinical["hba1c"]>=6.5 or clinical["fasting_glucose"]>=126: st.error("Entered laboratory value is in a commonly used diabetes diagnostic range. Seek clinical confirmation.")
+    elif clinical["hba1c"]>=5.7 or 100<=clinical["fasting_glucose"]<126: st.warning("Entered value may fall in a prediabetes range. Discuss confirmatory testing with a clinician.")
+    else: st.info("No diagnostic-range value was entered. Genetic risk does not replace glucose or HbA1c testing.")
+with t3:
+    audit=build_audit_record(a["case_ref"],a["z_score"],a["coverage"],a["ancestry"],a["build"],a["source"],r,clinical); st.json(audit); st.download_button("Download audit JSON",json.dumps(audit,indent=2),f"riskcontext_{a['case_ref']}.json","application/json",use_container_width=True)
+st.error("Do not use this result alone for diagnosis, treatment, insurance, employment, or denial of care.")
